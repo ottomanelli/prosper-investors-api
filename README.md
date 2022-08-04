@@ -22,7 +22,9 @@ and add the files.
 - info.txt
 - success.txt
 
-Once your log files are all setup create a .env file in the root of the repository based off .env.example.
+After the logs are setup you should create a `filter.ts` file in `./src` based off of `filter.example.ts.` More information on filtering can be found in the [Filters](#filters) section.
+
+Once the log and filter files are setup, next create a .env file in the root of the repository based off .env.example.
 
 While looking at the .env file you may notice you can enable AWS SNS which would is handy if you would like to know
 when you actually invest in a loan instead of having to check prosper yourself. It will also alert you when there is
@@ -61,8 +63,6 @@ See here for more info - [AWS SNS](https://aws.amazon.com/sns/)
 - `DELAY_IN_SECONDS` - How long we wait to recheck listings.
 - `RUN_TIME_IN_MINUTES` - How long the script will be running for.
 
-For info on the Prosper API checkout their [docs](https://developers.prosper.com/docs/). 
-
 ## Usage
 The purpose of this script is to make automatically investing in Prosper Loans a breeze. The benefit of using this API script instead of the automated investing offered on the Prosper website is you can more fine tunely set your filters for invested. 
 
@@ -89,7 +89,6 @@ Sorting should be done after filtering to prioritize the remaining loans that ar
 
 Once everything is setup you are ready to run the script! If you run this with no filters then you will invest in every loan in $25 incriments until you run out of cash so make sure they're setup correctly.
 
-
 ### For Development Purposes
 To run the script for development/testing purposes simply run
 `npm run dev` or `yarn dev`. That will compile the TS files into the dist folder and then will run `dist/index.js.`
@@ -109,3 +108,5 @@ This script makes use of [Prosper's](https://www.prosper.com/) API.
 New Loans are added to the website:
 - Monday - Friday - 12pm and 6pm ET
 - Saturday & Sunday - 3pm ET
+
+For more info on the Prosper API checkout their [docs](https://developers.prosper.com/docs/). 
