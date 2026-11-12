@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import path from 'path'
 
 import ProsperApi from './prosper';
+import { writeToLog } from './logging';
 import {
     checkEnvVariables,
     checkLogFiles,
@@ -18,18 +19,38 @@ console.log('Start Prosper API', { startTime });
 
 const checkLoans = async ({ delay, maxTime }: { delay: number, maxTime: number }) => {
     const Prosper = new ProsperApi();
-    await Prosper.login()
+    const logInfo = (message: string) => {
+        console.log(message)
+        if (Prosper.enableLogging) writeToLog(message, 'info.txt')
+    }
+
+    // One line when a run starts and one when it ends, so info.txt shows every cron firing
+    logInfo('Run started')
+
+    try {
+        await Prosper.login()
+    } catch (e: any) {
+        Prosper.logFailure(e?.message || e)
+        logInfo('Run stopped: could not log in, see failures.txt')
+        return
+    }
 
     const searchFilterOrder = async () => {
         console.log(`\nRunning searchFilterOrder, waiting ${delay} seconds before starting...`)
         await new Promise(resolve => setTimeout(resolve, (delay * 1000)));
 
-        Prosper.reset()
-        await Prosper.getAccountInfo()
-        await Prosper.getListings()
-        Prosper.filterAndSortListings()
-        Prosper.setupLoansToOrder()
-        await Prosper.orderLoans()
+        try {
+            Prosper.stats.polls++
+            Prosper.reset()
+            await Prosper.getAccountInfo()
+            await Prosper.getListings()
+            Prosper.filterAndSortListings()
+            Prosper.setupLoansToOrder()
+            await Prosper.orderLoans()
+        } catch (e: any) {
+            // A bad poll shouldn't end the run, the next one may be fine
+            Prosper.logFailure(e?.stack || e)
+        }
 
         const currentDate = new Date();
         const currentTime = currentDate.getTime();
@@ -38,7 +59,9 @@ const checkLoans = async ({ delay, maxTime }: { delay: number, maxTime: number }
 
         if (timeElapsed < maxTime) {
             searchFilterOrder()
-        }    
+        } else {
+            logInfo(`Run finished: ${Prosper.runSummary()}`)
+        }
     }
 
     searchFilterOrder()

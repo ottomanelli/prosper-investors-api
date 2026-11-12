@@ -1,6 +1,4 @@
-import fs from 'fs'
-import path from 'path'
-import { sendSMS } from './sns'
+import { logFiles, prepareLogFile } from './logging'
 
 export const checkEnvVariables = () : boolean => {
     const {
@@ -96,68 +94,17 @@ export const checkEnvVariables = () : boolean => {
 }
 
 
-// Checks for if the necessary log files exist.
-// Also checks if the log files are larger than what we specified in MB, just added here as 
-// I was logging a bunch and didn't realize how large the file was getting on my ec2
+// Makes sure the log folder and files exist and rotates any that grew past
+// LOG_FILE_SIZE_LIMIT_IN_MB. A log problem is reported but never stops a run.
 export const checkLogFiles = async () : Promise<boolean> => {
-    const logsDirectory = path.resolve(__dirname, '../logs');
-    const dirExists = fs.existsSync(logsDirectory)
-
-    const USE_AWS_SNS = process.env.USE_AWS_SNS === 'TRUE'
     const logFileLimit = Number(process.env.LOG_FILE_SIZE_LIMIT_IN_MB)
 
-    if (dirExists) {
-        const failuresLogPath = path.resolve(__dirname, '../logs/failures.txt')
-        const failuresLogExists = fs.existsSync(failuresLogPath);
-
-        const successLogPath = path.resolve(__dirname, '../logs/success.txt')
-        const successLogExists = fs.existsSync(successLogPath);
-
-        const infoLogPath = path.resolve(__dirname, '../logs/info.txt')
-        const infoLogExists = fs.existsSync(infoLogPath);
-
-        if (!failuresLogExists) {
-            console.log('Please create a failures.txt file in the logs folder in the root of the repo.')
-            return false
-        } else if (logFileLimit) {
-            const infoLogSize = fs.statSync(failuresLogPath).size
-            const fileSizeinMB = infoLogSize / (1024*1024)
-            if (fileSizeinMB > Number(process.env.LOG_FILE_SIZE_LIMIT_IN_MB)) {
-                const message = 'Your log file failures.txt is too large. Please increase your log file limit or delete old logs.'
-                if (USE_AWS_SNS) await sendSMS(message)
-                return false
-            }
+    for (const filename of logFiles) {
+        try {
+            prepareLogFile(filename, logFileLimit)
+        } catch (e) {
+            console.log(`Could not prepare log file ${filename}`, e)
         }
-
-        if (!successLogExists) {
-            console.log('Please create a success.txt file in the logs folder in the root of the repo.')
-            return false
-        } else if (logFileLimit) {
-            const infoLogSize = fs.statSync(successLogPath).size
-            const fileSizeinMB = infoLogSize / (1024*1024)
-            if (fileSizeinMB > Number(process.env.LOG_FILE_SIZE_LIMIT_IN_MB)) {
-                const message = 'Your log file success.txt is too large. Please increase your log file limit or delete old logs.'
-                if (USE_AWS_SNS) await sendSMS(message)
-                return false
-            }
-        }
-
-        if (!infoLogExists) {
-            console.log('Please create a info.txt file in the logs folder in the root of the repo.')
-            return false
-        } else if (logFileLimit) {
-            const infoLogSize = fs.statSync(infoLogPath).size
-            const fileSizeinMB = infoLogSize / (1024*1024)
-            if (fileSizeinMB > Number(process.env.LOG_FILE_SIZE_LIMIT_IN_MB)) {
-                const message = 'Your log file info.txt is too large. Please increase your log file limit or delete old logs.'
-                if (USE_AWS_SNS) await sendSMS(message)
-                return false
-            }
-        }
-
-    } else {
-        console.log('Please create a logs folder in the root of the repo and add failures.txt, info.txt, and success.txt.')
-        return false
     }
 
     return true

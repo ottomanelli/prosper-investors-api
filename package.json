@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "A script that allows for Prosper investors to fine tune their automated invesment strategies.",
   "main": "./src/index.ts",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "node ./dist/index.js",
     "dev": "yarn build && yarn start",

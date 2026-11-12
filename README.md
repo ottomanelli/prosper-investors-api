@@ -12,15 +12,16 @@ A script that allows the user to invest in loans based on a filter targeting all
 
 
 ## Installation
+This project runs on Node 24 (see `.nvmrc` and `engines` in `package.json`). With nvm, run `nvm use` in the repo first.
+
 As is for all node packages run `npm install` or `yarn` to install all necessary packages.
 
 
 ## Setup
-Next is to ensure you have your log folder/files setup. To do that create a folder `logs` in the root repository of the repo
-and add the files.
-- failures.txt
-- info.txt
-- success.txt
+The script keeps three log files in a `logs` folder in the root of the repo, and creates them on the first run if they are missing.
+- failures.txt - API errors and rejected orders
+- info.txt - one `Run started` line and one `Run finished` summary line per run, so you can see every time the script fired and what it found
+- success.txt - orders that Prosper accepted
 
 After the logs are setup you should create a `filter.ts` file in `./src` based off of `filter.example.ts.` More information on filtering can be found in the [Filters](#filters) section.
 
@@ -58,7 +59,7 @@ See here for more info - [AWS SNS](https://aws.amazon.com/sns/)
 - `TIME_ZONE` - THe time zone you are in for logging timestamp purposes. ie) 'America/New_York'
 
 - `ENABLE_LOGGING` - If 'TRUE' it would enable logging to the log files we specified earlier.
-- `LOG_FILE_SIZE_LIMIT_IN_MB` - Prevents the script from running if the log files are larger than we set the limit to. If set to 0 then we ignore this check.
+- `LOG_FILE_SIZE_LIMIT_IN_MB` - When a log file grows past this size it is moved to `<name>.1` (replacing the previous one) and a fresh file is started, so each log takes at most about twice this much disk. The script never stops because of log size. If set to 0 the logs are never rotated.
 
 - `DELAY_IN_SECONDS` - How long we wait to recheck listings.
 - `RUN_TIME_IN_MINUTES` - How long the script will be running for.
@@ -96,10 +97,10 @@ To run the script for development/testing purposes simply run
 ### For Production
 So when the script starts it will run until the time limit specified by `RUN_TIME_IN_MINUTES` is reached. It is not setup to run indefinitely as that seems a bit excessive since loans are released at specific times. The way I have this setup to run is I build the package and then use a cronjob to run `dist/index.js`.
 
-Here's an example of my `cronjob -l` running on my AWS ec2.
+Here's an example of my `crontab -l` on a machine whose clock is set to Eastern time, running Node 24. Each run starts two minutes before new loans are added (see [Misc](#misc)). Cron uses the machine's time zone, so shift the hours if yours isn't Eastern.
 ```
-0 16,22 * * 1-5 ~/.nvm/versions/node/v16.0.0/bin/node /home/ec2-user/prosper-api/dist/index.js
-0 19 * * 0,6 ~/.nvm/versions/node/v16.0.0/bin/node /home/ec2-user/prosper-api/dist/index.js
+58 11,17 * * 1-5 cd /home/me/prosper-investors-api && /usr/bin/node dist/index.js
+58 14 * * 0,6 cd /home/me/prosper-investors-api && /usr/bin/node dist/index.js
 ```
 
 ## Misc

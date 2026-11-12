@@ -37,6 +37,58 @@ export default class ProsperAP {
     refreshToken: string = ''; // expire after 10 hours, 
     listingsInvestedIn: number[] = [];
 
+    // Totals for the whole run, written to info.txt as one line when the run ends
+    stats = {
+        polls: 0,
+        errors: 0,
+        ordersPlaced: 0,
+        loansOrdered: 0,
+        maxListings: 0,
+        maxPassedFilter: 0,
+        pollsShortOnCash: 0,
+        lastBalance: null as number | null,
+        newListingsFirstSeenAt: '',
+    };
+    seenListingIds: Set<number> | null = null;
+
+    logFailure = (e: any) => {
+        this.stats.errors++
+        console.log(e)
+        if (this.enableLogging) writeToLog(`\n\n${typeof e === 'string' ? e : JSON.stringify(e)}\n\n`, 'failures.txt')
+    }
+
+    // The time new listings show up mid-run tells us if the cron job starts at the right time
+    trackNewListings = () => {
+        const ids: number[] = this.listings.map((l: any) => l.listing_number)
+
+        if (this.seenListingIds === null) {
+            this.seenListingIds = new Set(ids)
+            return
+        }
+
+        const seen = this.seenListingIds
+        if (!this.stats.newListingsFirstSeenAt && ids.some(id => !seen.has(id))) {
+            this.stats.newListingsFirstSeenAt = new Date().toLocaleTimeString("en-US", { timeZone: process.env.TIME_ZONE })
+        }
+        ids.forEach(id => seen.add(id))
+    }
+
+    runSummary = () : string => {
+        const s = this.stats
+        const parts = [
+            `${s.polls} polls`,
+            `${s.errors} error(s)`,
+            `${s.ordersPlaced} order(s) for ${s.loansOrdered} loan(s)`,
+            `most listings seen ${s.maxListings}`,
+            `most passing filter ${s.maxPassedFilter}`,
+            `cash ${s.lastBalance === null ? 'unknown' : '$' + s.lastBalance}`,
+            `new listings first seen ${s.newListingsFirstSeenAt || 'never'}`,
+        ]
+        if (s.pollsShortOnCash) parts.push(`${s.pollsShortOnCash} poll(s) had loans to buy but not enough cash`)
+
+        return parts.join(', ')
+    }
+
     reset = () => {
         this.receivedResults = 0;
         this.totalResults = 0;
@@ -59,6 +111,10 @@ export default class ProsperAP {
         });
         const json: any = await res.json();
 
+        if (!json.access_token) {
+            throw new Error(`Login failed (HTTP ${res.status}): ${json.error_description || json.error || 'no access token returned'}`)
+        }
+
         this.bearerToken = json.access_token;
         this.refreshToken = json.refresh_token;
     }
@@ -73,11 +129,16 @@ export default class ProsperAP {
             });
 
             const accountJson: any = await res.json();
+            if (typeof accountJson.available_cash_balance !== 'number') {
+                this.logFailure(`Account info had no cash balance (HTTP ${res.status})`)
+                return
+            }
+
             this.availableBalance = accountJson.available_cash_balance
+            this.stats.lastBalance = this.availableBalance
             this.maxLoansWeCanInvestIn = Math.floor(this.availableBalance / (Number(process.env.LOAN_INVESTMENT_AMOUNT) || 25))
         } catch (e) {
-            console.log(e)
-            if (this.enableLogging) writeToLog(`\n\n${JSON.stringify(e)}\n\n`, 'failures.txt')
+            this.logFailure(e)
         }
     }
 
@@ -94,10 +155,16 @@ export default class ProsperAP {
 
             const listingsJson: any = await listingsRes.json();
 
+            if (!Array.isArray(listingsJson.result)) {
+                this.logFailure(`Listings response had no result list (HTTP ${listingsRes.status})`)
+                return
+            }
+
             this.listings = listingsJson.result;
+            this.stats.maxListings = Math.max(this.stats.maxListings, this.listings.length)
+            this.trackNewListings()
         } catch (e) {
-            console.log(e)
-            if (this.enableLogging) writeToLog(`\n\n${JSON.stringify(e)}\n\n`, 'failures.txt')
+            this.logFailure(e)
         }
     }
 
@@ -111,7 +178,8 @@ export default class ProsperAP {
 
             console.log(infoMessage)
 
-            if (this.enableLogging) writeToLog(infoMessage, 'info.txt')
+            // Not written to info.txt on every poll anymore, the run summary covers it
+            if (this.maxLoansWeCanInvestIn === 0 && this.filteredLoans.length > 0) this.stats.pollsShortOnCash++
 
             return
         }
@@ -125,6 +193,8 @@ export default class ProsperAP {
             }
 
             console.log('investedIn', this.listingsInvestedIn)
+            this.stats.ordersPlaced++
+            this.stats.loansOrdered += this.order.bid_requests.length
             if (this.enableLogging) writeToLog(`Put in order for ${this.order.bid_requests.length} loan(s). - ${orderIdsString}`, 'success.txt')
             return
         }
@@ -140,22 +210,30 @@ export default class ProsperAP {
                 body: JSON.stringify(this.order)
             });
 
-            if (this.useAwsSNS) {
-                await sendSMS(`Put in order for ${this.order.bid_requests.length} loan(s).`)
-            }
+            const body = await res.text();
+            console.log('Order response', res.status, body)
 
-            const json = await res.json();
-            console.log('Order response', json)
-
+            // Marked as tried either way so a rejected order isn't resent on every poll
             for (let l in this.order.bid_requests) {
                 this.listingsInvestedIn.push(this.order.bid_requests[l].listing_id)
             }
 
+            if (!res.ok) {
+                this.logFailure(`Order for ${orderIdsString} was rejected (HTTP ${res.status}): ${body.slice(0, 500)}`)
+                return
+            }
+
+            if (this.useAwsSNS) {
+                await sendSMS(`Put in order for ${this.order.bid_requests.length} loan(s).`)
+            }
+
+            this.stats.ordersPlaced++
+            this.stats.loansOrdered += this.order.bid_requests.length
             if (this.enableLogging) writeToLog(`Put in order for ${this.order.bid_requests.length} loan(s). - ${orderIdsString}`, 'success.txt')
 
         } catch (e) {
-            console.log('Error placing order...', e)
-            if (this.enableLogging) writeToLog(`\n\n${JSON.stringify(e)}\n\n`, 'failures.txt')
+            console.log('Error placing order...')
+            this.logFailure(e)
             if (this.useAwsSNS) {
                 await sendSMS(`Error placing order...check failures.txt for error`)
                 // We exit the script if there is an error to prevent looping through and hitting
@@ -217,5 +295,6 @@ export default class ProsperAP {
         // first dibs on investing when there are more loans than we have availble to invest.
         filteredLoans.sort(sortByFicoAndDtiAndListingId)
         this.filteredLoans = filteredLoans
+        this.stats.maxPassedFilter = Math.max(this.stats.maxPassedFilter, filteredLoans.length)
     }
 }
