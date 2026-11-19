@@ -63,6 +63,7 @@ See here for more info - [AWS SNS](https://aws.amazon.com/sns/)
 
 - `DELAY_IN_SECONDS` - How long we wait to recheck listings.
 - `RUN_TIME_IN_MINUTES` - How long the script will be running for.
+- `REQUEST_TIMEOUT_IN_SECONDS` - Optional, defaults to 10. How long to wait on a Prosper API call before giving up and moving on to the next check. Logging in and placing an order always wait at least 30 seconds.
 
 ## Usage
 The purpose of this script is to make automatically investing in Prosper Loans a breeze. The benefit of using this API script instead of the automated investing offered on the Prosper website is you can more fine tunely set your filters for invested. 

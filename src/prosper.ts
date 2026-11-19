@@ -10,6 +10,12 @@ import {
 import { sortByFicoAndDtiAndListingId } from './sort'
 import { sendSMS } from './sns'
 
+// Without a timeout a stalled connection can hang for minutes and eat most of a run.
+// Read when called (not at import) so the values from .env are loaded first.
+const requestTimeout = () => (Number(process.env.REQUEST_TIMEOUT_IN_SECONDS) || 10) * 1000
+// Logging in and ordering get longer, giving up early on an order that is going through is worse than waiting
+const slowRequestTimeout = () => Math.max(requestTimeout(), 30 * 1000)
+
 type loanRequest = {
     listing_id: number,
     bid_amount: number,
@@ -108,6 +114,7 @@ export default class ProsperAP {
                 'Accept': 'application/json',
                 'Content-Type': 'application/x-www-form-urlencoded',
             },
+            timeout: slowRequestTimeout(),
         });
         const json: any = await res.json();
 
@@ -126,6 +133,7 @@ export default class ProsperAP {
                     'Accept': 'application/json',
                     'Authorization': `bearer ${this.bearerToken}`,
                 },
+                timeout: requestTimeout(),
             });
 
             const accountJson: any = await res.json();
@@ -151,6 +159,7 @@ export default class ProsperAP {
                     'Authorization': `bearer ${this.bearerToken}`,
                     'timezone': 'America/New_York'
                 },
+                timeout: requestTimeout(),
             });
 
             const listingsJson: any = await listingsRes.json();
@@ -207,7 +216,8 @@ export default class ProsperAP {
                     'Authorization': `bearer ${this.bearerToken}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(this.order)
+                body: JSON.stringify(this.order),
+                timeout: slowRequestTimeout(),
             });
 
             const body = await res.text();
@@ -234,6 +244,14 @@ export default class ProsperAP {
         } catch (e) {
             console.log('Error placing order...')
             this.logFailure(e)
+
+            // The order may have reached Prosper even though we got no answer, so don't
+            // send it again this run and risk buying the same loan twice.
+            for (let l in this.order.bid_requests) {
+                const listingId = this.order.bid_requests[l].listing_id
+                if (!this.listingsInvestedIn.includes(listingId)) this.listingsInvestedIn.push(listingId)
+            }
+            if (this.enableLogging) writeToLog(`Order for ${orderIdsString} got no answer, check Prosper to see if it went through. Not retrying this run.`, 'failures.txt')
             if (this.useAwsSNS) {
                 await sendSMS(`Error placing order...check failures.txt for error`)
                 // We exit the script if there is an error to prevent looping through and hitting
