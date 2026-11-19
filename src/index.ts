@@ -43,6 +43,7 @@ const checkLoans = async ({ delay, maxTime }: { delay: number, maxTime: number }
             Prosper.stats.polls++
             Prosper.reset()
             await Prosper.getAccountInfo()
+            await Prosper.resolveUnconfirmedOrders()
             await Prosper.getListings()
             Prosper.filterAndSortListings()
             Prosper.setupLoansToOrder()
@@ -60,6 +61,15 @@ const checkLoans = async ({ delay, maxTime }: { delay: number, maxTime: number }
         if (timeElapsed < maxTime) {
             searchFilterOrder()
         } else {
+            // Last chance to find out if an order that got no answer went through
+            try {
+                await Prosper.resolveUnconfirmedOrders(false)
+            } catch (e: any) {
+                Prosper.logFailure(e?.stack || e)
+            }
+            for (const listingId of Array.from(Prosper.unconfirmedOrders.keys())) {
+                if (Prosper.enableLogging) writeToLog(`Run ended without confirming the order for [${listingId}]. Check Prosper to see if it went through.`, 'failures.txt')
+            }
             logInfo(`Run finished: ${Prosper.runSummary()}`)
         }
     }

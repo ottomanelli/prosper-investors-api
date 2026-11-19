@@ -16,6 +16,17 @@ const requestTimeout = () => (Number(process.env.REQUEST_TIMEOUT_IN_SECONDS) || 
 // Logging in and ordering get longer, giving up early on an order that is going through is worse than waiting
 const slowRequestTimeout = () => Math.max(requestTimeout(), 30 * 1000)
 
+// How many times one listing can be ordered in a run when Prosper doesn't answer the order call
+const MAX_ORDER_ATTEMPTS = 2
+// Orders are processed asynchronously, so give one a moment to show up before deciding it never arrived
+const ORDER_CHECK_WAIT_MS = 5000
+
+type unconfirmedOrder = {
+    bidAmount: number,
+    attempts: number,
+    failedAt: number,
+}
+
 type loanRequest = {
     listing_id: number,
     bid_amount: number,
@@ -42,6 +53,9 @@ export default class ProsperAP {
     // not used currently as I only ever have this run for 30 mins...maybe in the future I will run it longer
     refreshToken: string = ''; // expire after 10 hours, 
     listingsInvestedIn: number[] = [];
+    // Listings whose order call errored or timed out, so we don't know if Prosper got the order
+    unconfirmedOrders: Map<number, unconfirmedOrder> = new Map();
+    runStartedAt: number = Date.now();
 
     // Totals for the whole run, written to info.txt as one line when the run ends
     stats = {
@@ -90,6 +104,7 @@ export default class ProsperAP {
             `cash ${s.lastBalance === null ? 'unknown' : '$' + s.lastBalance}`,
             `new listings first seen ${s.newListingsFirstSeenAt || 'never'}`,
         ]
+        if (this.unconfirmedOrders.size) parts.push(`${this.unconfirmedOrders.size} order(s) could not be confirmed`)
         if (s.pollsShortOnCash) parts.push(`${s.pollsShortOnCash} poll(s) had loans to buy but not enough cash`)
 
         return parts.join(', ')
@@ -177,6 +192,76 @@ export default class ProsperAP {
         }
     }
 
+    // "2026-11-17 12:01:34 -0500" -> ms, or NaN if Prosper ever changes the format
+    parseOrderDate = (orderDate: string) : number =>
+        Date.parse(String(orderDate).replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) ([+-]\d{2})(\d{2})$/, '$1T$2$3:$4'))
+
+    // After an order call fails we don't know if Prosper received it. Before ordering that
+    // listing again, look for it in the orders placed during this run. Found means it went
+    // through. Not found means it is safe to order again (up to MAX_ORDER_ATTEMPTS).
+    // allowRetry is false for the last check of a run, when there is no poll left to retry in.
+    resolveUnconfirmedOrders = async (allowRetry: boolean = true) => {
+        if (this.unconfirmedOrders.size === 0) return
+
+        let orders: any[]
+        try {
+            const res = await fetch('https://api.prosper.com/v1/orders/?limit=25', {
+                headers: {
+                    'Accept': 'application/json',
+                    'Authorization': `bearer ${this.bearerToken}`,
+                },
+                timeout: requestTimeout(),
+            });
+            const json: any = await res.json();
+
+            if (!Array.isArray(json.result)) {
+                this.logFailure(`Orders response had no result list (HTTP ${res.status})`)
+                return
+            }
+            orders = json.result
+        } catch (e) {
+            // Still unknown, check again on the next poll
+            this.logFailure(e)
+            return
+        }
+
+        // Only orders from this run count, an older order for the same listing is a different order.
+        // A minute of slack covers the clocks not agreeing exactly.
+        const ordersThisRun = orders.filter(o => !(this.parseOrderDate(o.order_date) < this.runStartedAt - 60 * 1000))
+
+        for (const [listingId, unconfirmed] of Array.from(this.unconfirmedOrders)) {
+            const bid = ordersThisRun
+                .flatMap(o => Array.isArray(o.bid_requests) ? o.bid_requests : [])
+                .find((b: any) => Number(b.listing_id) === listingId)
+
+            if (bid) {
+                this.unconfirmedOrders.delete(listingId)
+                this.stats.ordersPlaced++
+                this.stats.loansOrdered++
+                console.log(`Order for ${listingId} did go through`, bid)
+                if (this.enableLogging) writeToLog(`Put in order for 1 loan(s). - [${listingId}] - confirmed with Prosper after the order call failed (${bid.bid_status}/${bid.bid_result})`, 'success.txt')
+                continue
+            }
+
+            if (Date.now() - unconfirmed.failedAt < ORDER_CHECK_WAIT_MS) continue
+
+            if (!allowRetry) continue
+
+            if (unconfirmed.attempts >= MAX_ORDER_ATTEMPTS) {
+                // Stays in unconfirmedOrders so the run summary shows it, and in listingsInvestedIn so it isn't ordered again
+                if (unconfirmed.attempts === MAX_ORDER_ATTEMPTS) {
+                    unconfirmed.attempts++
+                    if (this.enableLogging) writeToLog(`Order for [${listingId}] failed ${MAX_ORDER_ATTEMPTS} times and Prosper has no record of it. Giving up on it for this run.`, 'failures.txt')
+                }
+                continue
+            }
+
+            // Prosper has no order for it, so let the normal filter/order steps pick it up again
+            console.log(`Prosper has no order for ${listingId}, it can be ordered again`)
+            this.listingsInvestedIn = this.listingsInvestedIn.filter(id => id !== listingId)
+        }
+    }
+
     orderLoans =  async () => {
         if (this.order.bid_requests.length === 0) {
             const infoMessage = this.maxLoansWeCanInvestIn === 0 && this.filteredLoans.length === 0
@@ -223,9 +308,12 @@ export default class ProsperAP {
             const body = await res.text();
             console.log('Order response', res.status, body)
 
-            // Marked as tried either way so a rejected order isn't resent on every poll
+            // Marked as tried either way so a rejected order isn't resent on every poll.
+            // Prosper answered, so nothing about these listings is unconfirmed anymore.
             for (let l in this.order.bid_requests) {
-                this.listingsInvestedIn.push(this.order.bid_requests[l].listing_id)
+                const listingId = this.order.bid_requests[l].listing_id
+                if (!this.listingsInvestedIn.includes(listingId)) this.listingsInvestedIn.push(listingId)
+                this.unconfirmedOrders.delete(listingId)
             }
 
             if (!res.ok) {
@@ -245,13 +333,16 @@ export default class ProsperAP {
             console.log('Error placing order...')
             this.logFailure(e)
 
-            // The order may have reached Prosper even though we got no answer, so don't
-            // send it again this run and risk buying the same loan twice.
+            // The order may have reached Prosper even though we got no answer. Hold these
+            // listings back until resolveUnconfirmedOrders has checked, so we never buy a loan twice.
             for (let l in this.order.bid_requests) {
-                const listingId = this.order.bid_requests[l].listing_id
+                const { listing_id: listingId, bid_amount: bidAmount } = this.order.bid_requests[l]
+                const attempts = (this.unconfirmedOrders.get(listingId)?.attempts || 0) + 1
+
+                this.unconfirmedOrders.set(listingId, { bidAmount, attempts, failedAt: Date.now() })
                 if (!this.listingsInvestedIn.includes(listingId)) this.listingsInvestedIn.push(listingId)
             }
-            if (this.enableLogging) writeToLog(`Order for ${orderIdsString} got no answer, check Prosper to see if it went through. Not retrying this run.`, 'failures.txt')
+            if (this.enableLogging) writeToLog(`Order for ${orderIdsString} got no answer. Checking with Prosper whether it went through before trying again.`, 'failures.txt')
             if (this.useAwsSNS) {
                 await sendSMS(`Error placing order...check failures.txt for error`)
                 // We exit the script if there is an error to prevent looping through and hitting
