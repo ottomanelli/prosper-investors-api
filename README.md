@@ -18,12 +18,14 @@ As is for all node packages run `npm install` or `yarn` to install all necessary
 
 
 ## Setup
-The script keeps three log files in a `logs` folder in the root of the repo, and creates them on the first run if they are missing.
+The script keeps its log files in a `logs` folder in the root of the repo, and creates them on the first run if they are missing.
 - failures.txt - API errors and rejected orders
 - info.txt - one `Run started` line and one `Run finished` summary line per run, so you can see every time the script fired and what it found
 - success.txt - orders that Prosper accepted
+- filters.txt - one line for each listing that passed at least one rule set, showing what every rule set decided and why
+- filter-listings.jsonl - the full listing data for those same listings, one JSON object per line
 
-After the logs are setup you should create a `filter.ts` file in `./src` based off of `filter.example.ts.` More information on filtering can be found in the [Filters](#filters) section.
+After the logs are setup you should create your rule sets by copying the example folder: `cp -r src/filters.example src/filters`. `src/filters` is ignored by git so your rules stay private. More information on filtering can be found in the [Filters](#filters) section.
 
 Once the log and filter files are setup, next create a .env file in the root of the repository based off .env.example.
 
@@ -81,7 +83,20 @@ The way the filtering works for the loans is fairly simple. We are essentially j
 - checkListingInfo
 - checkBorrowerInfo
 
-The way it is currently setup there is no preset filtering besides one example within `checkTransunionData`. Each of the functions must return a boolean which would determine if we should invest in the loan or not.
+The way it is currently setup there is no preset filtering besides one example within `checkTransunionData`. Each function returns either a boolean (should we invest or not) or a list of reasons for rejecting the loan, where an empty list means it passes. Returning reasons is worth the small effort: they are written to `logs/filters.txt` so you can see exactly why a loan was skipped.
+
+### Rule sets
+Every `.ts` file in `src/filters` is a rule set, named after the file. You can keep several side by side, for example the rules you used last year next to the ones you use now. On every run each listing is checked against all of them, but only one rule set places orders.
+
+- With one rule set, that one buys.
+- With more than one, set `ACTIVE_FILTER` in `.env` to the file name (without `.ts`) of the one that should buy. The script refuses to run until you do, it will not guess which rules spend your money.
+
+The other rule sets never buy anything. They are there so you can compare:
+
+- `logs/filters.txt` gets a line for every listing that passed at least one rule set, e.g. `[123] AA yield 7.9% 60mo ... | old-rules: PASS | new-rules (buying): FAIL (at02s_open_accounts=24)`
+- the `Run finished` line in `logs/info.txt` shows how many listings passed each rule set during the run
+
+This makes it easy to see what a rule change is costing or saving you before and after you switch to it. A file name starting with `_` is ignored, which is a handy way to park a rule set.
 
 ## Sorting
 Sorting should be done after filtering to prioritize the remaining loans that are left. Sorting is not really necessary but if you have a bunch of loans that pass the filtering stage then it's good to prioritize which ones you want to invest in if you don't have enough money to invest in them all. Sorting is just running an Array.sort(), you can see an example usecase in `src/sort.ts` where it is sorting based on average fico score and debt to income ration w/ prosper loan.

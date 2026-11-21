@@ -3,6 +3,8 @@ import path from 'path'
 
 import ProsperApi from './prosper';
 import { writeToLog } from './logging';
+import { loadRuleSets, pickActiveRuleSet } from './ruleSets';
+import type { ruleSet } from './ruleSets';
 import {
     checkEnvVariables,
     checkLogFiles,
@@ -18,14 +20,27 @@ const startTime = startDate.getTime();
 console.log('Start Prosper API', { startTime });
 
 const checkLoans = async ({ delay, maxTime }: { delay: number, maxTime: number }) => {
-    const Prosper = new ProsperApi();
     const logInfo = (message: string) => {
         console.log(message)
-        if (Prosper.enableLogging) writeToLog(message, 'info.txt')
+        if (process.env.ENABLE_LOGGING === 'TRUE') writeToLog(message, 'info.txt')
     }
 
     // One line when a run starts and one when it ends, so info.txt shows every cron firing
     logInfo('Run started')
+
+    // Nothing is bought unless it's clear which rule set is doing the buying
+    let ruleSets: ruleSet[]
+    let activeRuleSet: ruleSet
+    try {
+        ruleSets = loadRuleSets()
+        activeRuleSet = pickActiveRuleSet(ruleSets, process.env.ACTIVE_FILTER)
+    } catch (e: any) {
+        logInfo(`Run stopped: ${e?.message || e}`)
+        return
+    }
+    if (ruleSets.length > 1) console.log(`Buying with rule set "${activeRuleSet.name}", comparing ${ruleSets.length} rule sets`)
+
+    const Prosper = new ProsperApi(ruleSets, activeRuleSet);
 
     try {
         await Prosper.login()

@@ -5,3 +5,4 @@ logs
 .env
 dist
 src/filter.ts
+src/filters

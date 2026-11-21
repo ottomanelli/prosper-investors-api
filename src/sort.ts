@@ -1,5 +1,5 @@
-import type { loan } from './filter'
-import { convertFicoToAverage } from './filter'
+import type { loan } from './loanType'
+import { convertFicoToAverage } from './loanType'
 
 export const sortByFicoAndDtiAndListingId = (a: loan, b: loan) => {
     return convertFicoToAverage(b.credit_bureau_values_transunion_indexed.fico_score) - convertFicoToAverage(a.credit_bureau_values_transunion_indexed.fico_score)

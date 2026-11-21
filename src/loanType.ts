@@ -76,7 +76,7 @@ export type loan = {
     has_mortgage: boolean; // An indication whether the borrower has an outstanding mortgage.
     estimated_monthly_housing_expense: number; // The estimated monthly housing expense for the borrower.
     member_key: string; // Borrower unique ID/Member key
-    income_range: string; // You may specify values from 0 to 7.
+    income_range: number; // You may specify values from 0 to 7.
     income_range_description: string; // A textual description corresponding to the income_range number described above.
     stated_monthly_income: number; // The borrower’s monthly income, as provided by the borrower.
     income_verifiable: boolean; // The borrower stated that they could verify their stated income.
@@ -85,109 +85,4 @@ export type loan = {
     occupation: string; // Occupation Name
     borrower_state: string; // State, abbreviated.(CA, TX, MA, etc.)
     months_employed: number; // Length of employment in months.
-}
-
-export const checkPriorProsperLoans = (loan: loan) : boolean => {
-    const {
-        prior_prosper_loans_active,
-        prior_prosper_loans,
-        prior_prosper_loans_principal_borrowed,
-        prior_prosper_loans_principal_outstanding,
-        prior_prosper_loans_balance_outstanding,
-        prior_prosper_loans_cycles_billed,
-        prior_prosper_loans_ontime_payments,
-        prior_prosper_loans_late_cycles,
-        prior_prosper_loans_late_payments_one_month_plus,
-        max_prior_prosper_loan,
-        min_prior_prosper_loan,
-        prior_prosper_loan_earliest_pay_off,
-    } = loan
-
-    return true
-}
-
-export const checkTransunionData = ({ credit_bureau_values_transunion_indexed: {
-    credit_report_date,
-    at02s_open_accounts,
-    g041s_accounts_30_or_more_days_past_due_ever,
-    g093s_number_of_public_records,
-    g094s_number_of_public_record_bankruptcies, 
-    g095s_months_since_most_recent_public_record,
-    g102s_months_since_most_recent_inquiry,
-    g218b_number_of_delinquent_accounts,
-    g980s_inquiries_in_the_last_6_months,
-    re20s_age_of_oldest_revolving_account_in_months,
-    s207s_months_since_most_recent_public_record_bankruptcy,
-    re33s_balance_owed_on_all_revolving_accounts,
-    at57s_amount_delinquent,
-    g099s_public_records_last_24_months,
-    at20s_oldest_trade_open_date,
-    at03s_current_credit_lines,
-    re101s_revolving_balance,
-    bc34s_bankcard_utilization,
-    at01s_credit_lines,
-    fico_score,
-}}: loan) : boolean => {
-    let shouldInvest = true
-    const averageFico = convertFicoToAverage(fico_score)
-    // Handle your filters this way, if a requirement isn't met then return false
-    if (averageFico < 650) return false
-
-    return true
-}
-
-export const checkListingInfo = ({
-    historical_return,
-    historical_return_10th_pctl,
-    historical_return_90th_pctl,
-    co_borrower_application,
-    listing_start_date,
-    listing_number,
-    investment_product_id,
-    decision_bureau,
-    listing_creation_date,
-    listing_status,
-    listing_status_reason,
-    verification_stage,
-    listing_amount,
-    amount_funded,
-    amount_remaining,
-    percent_funded,
-    partial_funding_indicator,
-    funding_threshold,
-    prosper_rating,
-    lender_yield,
-    borrower_rate,
-    borrower_apr,
-    listing_term,
-    listing_monthly_payment,
-    prosper_score,
-    listing_category_id,
-    listing_title,
-    lender_indicator,
-    amount_participation,
-    investment_typeid,
-    investment_type_description,
-    last_updated_date,
-    invested,
-    biddable,
-}: loan) : boolean => {
-    return true;
-}
-
-export const checkBorrowerInfo = ({
-    has_mortgage,
-    estimated_monthly_housing_expense,
-    member_key,
-    income_range,
-    income_range_description,
-    stated_monthly_income,
-    income_verifiable,
-    dti_wprosper_loan,
-    employment_status_description,
-    occupation,
-    borrower_state,
-    months_employed,
-}: loan) : boolean => {
-    return true
 }

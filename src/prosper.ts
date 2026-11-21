@@ -1,11 +1,6 @@
 import fetch from 'node-fetch';
-import { writeToLog } from './logging'
-import {
-    checkPriorProsperLoans,
-    checkTransunionData,
-    checkListingInfo,
-    checkBorrowerInfo,
-} from './filter'
+import { writeToLog, writeRawToLog } from './logging'
+import type { ruleSet } from './ruleSets'
 
 import { sortByFicoAndDtiAndListingId } from './sort'
 import { sendSMS } from './sns'
@@ -71,6 +66,21 @@ export default class ProsperAP {
     };
     seenListingIds: Set<number> | null = null;
 
+    // Every rule set is checked against every listing, only the active one decides what we buy
+    ruleSets: ruleSet[];
+    activeRuleSet: ruleSet;
+    // Listings each rule set passed at any point in the run
+    passedByRuleSet: Map<string, Set<number>> = new Map();
+    // Which rule sets passed a listing the last time it was logged, so it's only logged again when that changes
+    loggedComparisons: Map<number, string> = new Map();
+    savedListingIds: Set<number> = new Set();
+
+    constructor(ruleSets: ruleSet[], activeRuleSet: ruleSet) {
+        this.ruleSets = ruleSets
+        this.activeRuleSet = activeRuleSet
+        ruleSets.forEach(r => this.passedByRuleSet.set(r.name, new Set()))
+    }
+
     logFailure = (e: any) => {
         this.stats.errors++
         console.log(e)
@@ -104,6 +114,10 @@ export default class ProsperAP {
             `cash ${s.lastBalance === null ? 'unknown' : '$' + s.lastBalance}`,
             `new listings first seen ${s.newListingsFirstSeenAt || 'never'}`,
         ]
+        if (this.ruleSets.length > 1) {
+            const counts = this.ruleSets.map(r => `${r.name} ${this.passedByRuleSet.get(r.name)?.size || 0}${r === this.activeRuleSet ? ' (buying)' : ''}`)
+            parts.push(`listings passing each rule set: ${counts.join(', ')}`)
+        }
         if (this.unconfirmedOrders.size) parts.push(`${this.unconfirmedOrders.size} order(s) could not be confirmed`)
         if (s.pollsShortOnCash) parts.push(`${s.pollsShortOnCash} poll(s) had loans to buy but not enough cash`)
 
@@ -378,20 +392,51 @@ export default class ProsperAP {
         }
     }
 
+    // One line in filters.txt for a listing that passes at least one rule set, showing what
+    // every rule set made of it. The full listing goes to filter-listings.jsonl once per run
+    // so there is a record of what a loan looked like when it was (or wasn't) bought.
+    logComparison = (loan: any, results: { name: string, reasons: string[] }[]) => {
+        const passed = results.filter(r => r.reasons.length === 0).map(r => r.name)
+        const listingId: number = loan.listing_number
+        const signature = passed.join(',')
+
+        passed.forEach(name => this.passedByRuleSet.get(name)?.add(listingId))
+
+        if (passed.length === 0 || this.loggedComparisons.get(listingId) === signature) return
+        this.loggedComparisons.set(listingId, signature)
+
+        if (!this.enableLogging) return
+
+        const percent = (n: any) => typeof n === 'number' ? `${Math.round(n * 10000) / 100}%` : '?'
+        const details = [
+            `[${listingId}]`,
+            loan.prosper_rating,
+            `yield ${percent(loan.lender_yield)}`,
+            `${loan.listing_term}mo`,
+            `$${loan.listing_amount}`,
+            loan.listing_title,
+            `FICO ${loan.credit_bureau_values_transunion_indexed?.fico_score}`,
+            `DTI ${percent(loan.dti_wprosper_loan)}`,
+        ].join(' ')
+        const verdicts = results.map(r => {
+            const label = r.name + (r.name === this.activeRuleSet.name ? ' (buying)' : '')
+            return r.reasons.length === 0 ? `${label}: PASS` : `${label}: FAIL (${r.reasons.join('; ')})`
+        })
+
+        writeToLog(`${details} | ${verdicts.join(' | ')}`, 'filters.txt')
+
+        if (!this.savedListingIds.has(listingId)) {
+            this.savedListingIds.add(listingId)
+            writeRawToLog(JSON.stringify({ seen: new Date().toISOString(), passed, listing: loan }), 'filter-listings.jsonl')
+        }
+    }
+
     filterAndSortListings = () => {
         const filteredLoans = this.listings.filter((loan: any) => {
-            let shouldInvest = true;
+            const results = this.ruleSets.map(r => ({ name: r.name, reasons: r.check(loan) }))
+            this.logComparison(loan, results)
 
-            const priorProsperInfo = checkPriorProsperLoans(loan)
-            const transunionInfo = checkTransunionData(loan)
-            const listingInfo = checkListingInfo(loan)
-            const borrowerInfo = checkBorrowerInfo(loan)
-
-            // filter based on loan data
-            if (!priorProsperInfo) shouldInvest = false
-            if (!transunionInfo) shouldInvest = false
-            if (!listingInfo) shouldInvest = false
-            if (!borrowerInfo) shouldInvest = false
+            let shouldInvest = results.find(r => r.name === this.activeRuleSet.name)?.reasons.length === 0
 
             // Prevent issues where the prosper API doesn't update
             // the loan listing data right away with what was invested in

@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 
 export const logsDirectory = path.resolve(__dirname, '../logs')
-export const logFiles = ['failures.txt', 'success.txt', 'info.txt']
+export const logFiles = ['failures.txt', 'success.txt', 'info.txt', 'filters.txt', 'filter-listings.jsonl']
 
 // Logging should never be the reason a run dies, so a failed write is only printed.
 export const writeToLog = (message: string, filename: string) => {
@@ -12,6 +12,15 @@ export const writeToLog = (message: string, filename: string) => {
     try {
         fs.appendFileSync(logPath, `${message} - ${currentTime}\n`)
         console.log(`Logging to ${filename}.`)
+    } catch (e) {
+        console.log(`Could not write to ${filename}`, e)
+    }
+}
+
+// For logs that are read by a program, the line is written exactly as given
+export const writeRawToLog = (line: string, filename: string) => {
+    try {
+        fs.appendFileSync(path.join(logsDirectory, filename), `${line}\n`)
     } catch (e) {
         console.log(`Could not write to ${filename}`, e)
     }
