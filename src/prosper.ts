@@ -71,7 +71,7 @@ export default class ProsperAP {
     activeRuleSet: ruleSet;
     // Listings each rule set passed at any point in the run
     passedByRuleSet: Map<string, Set<number>> = new Map();
-    // Which rule sets passed a listing the last time it was logged, so it's only logged again when that changes
+    // What every rule set made of a listing the last time it was logged, so it's only logged again when that changes
     loggedComparisons: Map<number, string> = new Map();
     savedListingIds: Set<number> = new Set();
 
@@ -392,17 +392,20 @@ export default class ProsperAP {
         }
     }
 
-    // One line in filters.txt for a listing that passes at least one rule set, showing what
-    // every rule set made of it. The full listing goes to filter-listings.jsonl once per run
-    // so there is a record of what a loan looked like when it was (or wasn't) bought.
+    // One line per listing showing what every rule set made of it: in filters.txt when at least
+    // one rule set passes it, otherwise in filters-failed.txt. A listing is logged the first time
+    // a run sees it and again whenever a verdict or reason changes, so a loan that fails at one
+    // run and passes at a later one shows up in both files. The full listing goes to
+    // filter-listings.jsonl once per run for listings that pass, so there is a record of what a
+    // loan looked like when it was (or wasn't) bought.
     logComparison = (loan: any, results: { name: string, reasons: string[] }[]) => {
         const passed = results.filter(r => r.reasons.length === 0).map(r => r.name)
         const listingId: number = loan.listing_number
-        const signature = passed.join(',')
+        const signature = JSON.stringify(results)
 
         passed.forEach(name => this.passedByRuleSet.get(name)?.add(listingId))
 
-        if (passed.length === 0 || this.loggedComparisons.get(listingId) === signature) return
+        if (this.loggedComparisons.get(listingId) === signature) return
         this.loggedComparisons.set(listingId, signature)
 
         if (!this.enableLogging) return
@@ -423,9 +426,9 @@ export default class ProsperAP {
             return r.reasons.length === 0 ? `${label}: PASS` : `${label}: FAIL (${r.reasons.join('; ')})`
         })
 
-        writeToLog(`${details} | ${verdicts.join(' | ')}`, 'filters.txt')
+        writeToLog(`${details} | ${verdicts.join(' | ')}`, passed.length ? 'filters.txt' : 'filters-failed.txt')
 
-        if (!this.savedListingIds.has(listingId)) {
+        if (passed.length && !this.savedListingIds.has(listingId)) {
             this.savedListingIds.add(listingId)
             writeRawToLog(JSON.stringify({ seen: new Date().toISOString(), passed, listing: loan }), 'filter-listings.jsonl')
         }

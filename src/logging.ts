@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 
 export const logsDirectory = path.resolve(__dirname, '../logs')
-export const logFiles = ['failures.txt', 'success.txt', 'info.txt', 'filters.txt', 'filter-listings.jsonl']
+export const logFiles = ['failures.txt', 'success.txt', 'info.txt', 'filters.txt', 'filters-failed.txt', 'filter-listings.jsonl']
 
 // Logging should never be the reason a run dies, so a failed write is only printed.
 export const writeToLog = (message: string, filename: string) => {

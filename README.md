@@ -23,6 +23,7 @@ The script keeps its log files in a `logs` folder in the root of the repo, and c
 - info.txt - one `Run started` line and one `Run finished` summary line per run, so you can see every time the script fired and what it found
 - success.txt - orders that Prosper accepted
 - filters.txt - one line for each listing that passed at least one rule set, showing what every rule set decided and why
+- filters-failed.txt - the same kind of line for listings every rule set turned down, so a loan that fails at one run and passes at a later one can be spotted
 - filter-listings.jsonl - the full listing data for those same listings, one JSON object per line
 
 After the logs are setup you should create your rule sets by copying the example folder: `cp -r src/filters.example src/filters`. `src/filters` is ignored by git so your rules stay private. More information on filtering can be found in the [Filters](#filters) section.
